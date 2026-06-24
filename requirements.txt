@@ -1,0 +1,7 @@
+streamlit>=1.30.0
+numpy>=1.24.0
+trimesh[easy]>=4.0.0
+scikit-image>=0.22.0
+noise>=1.2.2
+pyvista>=0.43.0
+st-pyvista>=0.1.0
