@@ -6,6 +6,35 @@ import streamlit.components.v1 as components
 from core.tpms_lattice import generate_multi_field_lattice, LATTICE_LIBRARY
 from core.physics import calculate_multi_pressure_field
 from core.geometry import load_and_voxelize_mesh
+from pathlib import Path
+
+@st.cache_resource(show_spinner=False)
+def cached_load_mesh(path, resolution):
+    return load_and_voxelize_mesh(
+        path,
+        resolution
+    )
+
+@st.cache_resource(show_spinner=False)
+def cached_tpms(
+    resolution,
+    periods,
+    base_style,
+    press_style,
+    base_dense,
+    max_dense,
+    pressure_hash,
+    pressure_field
+):
+    return generate_multi_field_lattice(
+        resolution=resolution,
+        periods=periods,
+        base_style=base_style,
+        pressure_style=press_style,
+        base_thickness=base_dense,
+        max_pressure_thickness=max_dense,
+        combined_pressure_field=pressure_field
+    )
 
 if "clicks" not in st.session_state:
     st.session_state.clicks = []
@@ -61,12 +90,16 @@ with col_left:
     uploaded_file = st.file_uploader("Upload Target Part File (STL/OBJ format)", type=["stl", "obj"], label_visibility="collapsed")
     
     if uploaded_file:
-        input_path = f"data/input/{uploaded_file.name}"
+        safe_name = Path(uploaded_file.name).name
+        input_path = f"data/input/{safe_name}"
         with open(input_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
             
         with st.spinner("Processing live graphics display context..."):
-            cad_mesh, _ = load_and_voxelize_mesh(input_path, resolution=resolution)
+            cad_mesh, _ = cached_load_mesh(
+                input_path,
+                resolution
+            )
             
             # Center and scale to normalized bounds (-1 to 1) 
             # --- 1. Compute Shared Normalization ---
@@ -85,8 +118,15 @@ with col_left:
             
             lattice_data = None
             if "Mode B" in view_mode:
+                physics_clicks = [
+                    ((np.array(pt) - centroid) * scale_factor).tolist()
+                    for pt in st.session_state.clicks
+                ]
+
                 master_field = calculate_multi_pressure_field(
-                    resolution=resolution, click_list=st.session_state.clicks, influence_radius=inf_radius
+                    resolution=resolution,
+                    click_list=physics_clicks,
+                    influence_radius=inf_radius
                 )
                 lattice_mesh = generate_multi_field_lattice(
                     resolution=resolution, periods=periods, base_style=base_style, custom_base_eq="",
@@ -97,41 +137,58 @@ with col_left:
                 if lattice_mesh is not None:
 
                     try:
-                        # 1. Perform intersection
                         lattice_mesh = lattice_mesh.intersection(cad_mesh, engine='manifold')
+                        if (
+                            lattice_mesh is None
+                            or len(lattice_mesh.vertices) == 0
+                        ):
+                            lattice_mesh = None
                     except Exception as e:
                         st.warning(f"Boolean intersection skipped: {e}")
                     
-                    # 2. FIX: Reset the lattice to its own local center immediately after intersection
-                    # This removes the "drift" caused by the boolean operation
-                    lattice_mesh.vertices -= lattice_mesh.bounding_box.centroid
+                    if lattice_mesh is not None:
                     
-                    # Now continue with your existing cleaning and scaling logic
-                    comps = lattice_mesh.split(only_watertight=False)
-                    if len(comps) > 1:
-                        lattice_mesh = max(comps, key=lambda m: m.area)
-                    
-                    # --- UNIFORM PROPORTIONAL FITTING ENGINE ---
-                    # 1. Get bounding extents for both systems
-                    # Note: Using the post-intersection lattice_mesh.vertices
-                    lat_extents = lattice_mesh.bounding_box.extents
-                    stl_norm_extents = norm_vertices.max(axis=0) - norm_vertices.min(axis=0)
-                    
-                    # 2. Compute proportional aspect ratios
-                    with np.errstate(divide='ignore', invalid='ignore'):
-                        ratios = stl_norm_extents / lat_extents
-                        ratios = ratios[np.isfinite(ratios) & (ratios > 0)]
-                    
-                    uniform_ratio = np.min(ratios) if len(ratios) > 0 else 1.0
-                    
-                    # 3. Apply scaling and move it to the normalized STL center point
-                    # Because we centered the lattice at (0,0,0) above, this now aligns perfectly
-                    lat_vertices = (lattice_mesh.vertices) * uniform_ratio
-                    
-                    # 4. Final floor snap
-                    lat_vertices[:, 1] -= lat_vertices[:, 1].min()
+                        # 2. FIX: Reset the lattice to its own local center immediately after intersection
+                        # This removes the "drift" caused by the boolean operation
+                        lattice_mesh.vertices -= lattice_mesh.bounding_box.centroid
+                        
+                        # Now continue with your existing cleaning and scaling logic
+                        comps = [
+                            c for c in lattice_mesh.split(
+                                only_watertight=False
+                            )
+                            if len(c.vertices) > 0
+                        ]
 
-                    lattice_data = {"vertices": lat_vertices.tolist(), "faces": lattice_mesh.faces.tolist()}
+                        if comps:
+                            lattice_mesh = max(
+                                comps,
+                                key=lambda m: m.area
+                            )
+                        else:
+                            lattice_mesh = None
+                        
+                        # --- UNIFORM PROPORTIONAL FITTING ENGINE ---
+                        # 1. Get bounding extents for both systems
+                        # Note: Using the post-intersection lattice_mesh.vertices
+                        lat_extents = lattice_mesh.bounding_box.extents
+                        stl_norm_extents = norm_vertices.max(axis=0) - norm_vertices.min(axis=0)
+                        
+                        # 2. Compute proportional aspect ratios
+                        with np.errstate(divide='ignore', invalid='ignore'):
+                            ratios = stl_norm_extents / lat_extents
+                            ratios = ratios[np.isfinite(ratios) & (ratios > 0)]
+                        
+                        uniform_ratio = np.min(ratios) if len(ratios) > 0 else 1.0
+                        
+                        # 3. Apply scaling and move it to the normalized STL center point
+                        # Because we centered the lattice at (0,0,0) above, this now aligns perfectly
+                        lat_vertices = (lattice_mesh.vertices) * uniform_ratio
+                        
+                        # 4. Final floor snap
+                        lat_vertices[:, 1] -= lat_vertices[:, 1].min()
+
+                        lattice_data = {"vertices": lat_vertices.tolist(), "faces": lattice_mesh.faces.tolist()}
 
             # Map coordinates safely into the normalized viewport scale domain
             normalized_clicks = []
@@ -150,8 +207,19 @@ with col_left:
                     ]
                     world_pt = (np.array(click_pt) / scale_factor) + centroid
                     world_pt_list = world_pt.tolist()
-                    if world_pt_list not in st.session_state.clicks:
-                        st.session_state.clicks.append(world_pt_list)
+                    duplicate = any(
+                        np.allclose(
+                            world_pt,
+                            np.array(existing),
+                            atol=1e-3
+                        )
+                        for existing in st.session_state.clicks
+                    )
+
+                    if not duplicate:
+                        st.session_state.clicks.append(
+                            world_pt_list
+                        )
                     st.query_params.clear()
                     st.rerun()
                 except Exception:
