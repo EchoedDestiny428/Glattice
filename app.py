@@ -1,6 +1,8 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import numpy as np
 import trimesh
+import pyvista as pv
 from core.tpms_lattice import generate_multi_field_lattice, LATTICE_LIBRARY
 from core.physics import calculate_multi_pressure_field
 from core.geometry import load_and_voxelize_mesh
@@ -13,7 +15,7 @@ st.title("Stress-Driven Generative Lattice Studio")
 st.write("Upload a CAD body, define high-pressure locations, and generate seamless morphing structures.")
 
 st.sidebar.header("1. Global Lattice Parameters")
-resolution = st.sidebar.slider("Voxel Grid Resolution", 32, 128, 64, step=16)
+resolution = st.sidebar.slider("Voxel Grid Resolution", 32, 96, 64, step=16)
 periods = st.sidebar.slider("Lattice Cell Frequency (Periods)", 1.0, 10.0, 4.0, step=0.5)
 
 options = list(LATTICE_LIBRARY.keys()) + ["Custom Equation"]
@@ -32,7 +34,7 @@ base_dense = st.sidebar.slider("Baseline Wall Thickness", -0.4, 0.4, 0.0, step=0
 max_dense = st.sidebar.slider("Max Pressure Wall Thickness", -0.4, 0.6, 0.3, step=0.05)
 inf_radius = st.sidebar.slider("Pressure Blend Radius (Influence Field)", 0.1, 1.5, 0.4, step=0.05)
 
-tab1, tab2 = st.tabs(["Geometry Input & Stress Painting", "Lattice Synthesis"])
+tab1, tab2 = st.tabs(["Geometry Input & Stress Painting", "Lattice Synthesis & 3D Preview"])
 
 with tab1:
     st.subheader("CAD Boundary Selection")
@@ -62,7 +64,7 @@ with tab1:
                 st.rerun()
 
 with tab2:
-    st.subheader("Synthesis Pipeline")
+    st.subheader("Synthesis & Visualization")
     if not uploaded_file:
         st.info("Please complete Step 1 by uploading a baseline CAD shell profile geometry.")
     else:
@@ -77,6 +79,11 @@ with tab2:
                     influence_radius=inf_radius
                 )
                 
+                cad_mesh, cad_mask = load_and_voxelize_mesh(input_path, resolution=resolution)
+                
+                if not cad_mesh.is_watertight:
+                    st.warning("⚠️ Warning: Your uploaded CAD mesh has open holes or non-manifold edges. The engine is attempting an automated shrink-wrap repair.")
+                
                 lattice_mesh = generate_multi_field_lattice(
                     resolution=resolution,
                     periods=periods,
@@ -89,14 +96,34 @@ with tab2:
                     combined_pressure_field=master_field
                 )
                 
-                _, cad_mask = load_and_voxelize_mesh(input_path, resolution=resolution)
-                
                 if lattice_mesh is not None:
                     out_path = f"data/output/reinforced_{uploaded_file.name}"
                     lattice_mesh.export(out_path)
                     
                     st.balloons()
                     st.success("Lattice matrix compiled cleanly into a single unified topology structure!")
+                    
+                    st.subheader("Interactive 3D Preview")
+                    
+                    # Convert our generated trimesh to PyVista PolyData
+                    pv_mesh = pv.PolyData(lattice_mesh.vertices, np.c_[np.full(len(lattice_mesh.faces), 3), lattice_mesh.faces])  # type: ignore
+                    
+                    # Initialize the PyVista offscreen renderer
+                    plotter = pv.Plotter(window_size=[800, 500], off_screen=True)  # type: ignore
+                    plotter.set_background("#1e1e1e")  # type: ignore
+                    plotter.add_mesh(pv_mesh, color="#00ffcc", show_edges=True, edge_color="#003322", smooth_shading=True)  # type: ignore
+                    plotter.add_axes()  # type: ignore
+                    plotter.view_isometric()  # type: ignore
+                    
+                    # Export the renderer's scene to a standalone inline HTML block
+                    html_path = "data/output/preview.html"
+                    plotter.export_html(html_path, backend="trame")  # type: ignore
+                    
+                    # Load and inject the HTML directly into the web canvas safely
+                    with open(html_path, "r", encoding="utf-8") as html_file:
+                        render_html = html_file.read()
+                    
+                    components.html(render_html, height=500, scrolling=False)
                     
                     with open(out_path, "rb") as file:
                         st.download_button(
