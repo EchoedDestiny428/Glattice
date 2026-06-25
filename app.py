@@ -44,7 +44,6 @@ if "clicks" not in st.session_state:
 def cached_mesh(path, resolution):
     return load_and_voxelize_mesh(path, resolution)
 
-
 @st.cache_data(show_spinner=False)
 def cached_pressure(resolution, clicks_tuple, radius):
     clicks = [list(c) for c in clicks_tuple]
@@ -131,6 +130,9 @@ with col1:
 
         path = f"data/{uploaded.name}"
 
+        # Ensure directory exists
+        os.makedirs("data", exist_ok=True)
+
         with open(path, "wb") as f:
             f.write(uploaded.getbuffer())
 
@@ -147,7 +149,7 @@ with col1:
             "faces": cad_mesh.faces.tolist()
         }
 
-                # -----------------------------
+        # -----------------------------
         # CLICK LIST (ALREADY NORMALIZED)
         # -----------------------------
         clicks = st.session_state.clicks
@@ -209,8 +211,6 @@ with col1:
         # -----------------------------
         # CLICK HANDLING
         # -----------------------------
-        query_params = st.query_params
-
         click_data = _click_listener(key="lc", default=None)
         if click_data and click_data.get('t') != st.session_state.get('_lt'):
             st.session_state['_lt'] = click_data['t']
@@ -229,6 +229,31 @@ with col1:
 
         <style>
             body {{ margin:0; overflow:hidden; background:#0f1115; }}
+            .node-log-panel {{
+                position: fixed; 
+                top: 10px; 
+                right: 10px; 
+                z-index: 999;
+                background: rgba(0,0,0,0.8); 
+                color: #00ffcc;
+                font: 12px monospace; 
+                padding: 12px; 
+                border-radius: 8px;
+                pointer-events: none; 
+                white-space: nowrap; 
+                max-height: 80vh; 
+                overflow-y: auto;
+                border: 1px solid #2d3748;
+            }}
+            .node-log-title {{
+                color: #ffffff;
+                font-weight: bold;
+                margin-bottom: 8px;
+                display: block;
+                border-bottom: 1px solid #4a5568;
+                padding-bottom: 4px;
+            }}
+            .node-entry {{ margin-bottom: 4px; }}
         </style>
         </head>
 
@@ -258,9 +283,23 @@ with col1:
 
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
 
-        const clicks = {json.dumps(normalized_clicks)};
+        // ── LIVE NODE LOGGING PANEL ───────────────────────────
+        const logPanel = document.createElement('div');
+        logPanel.className = 'node-log-panel';
+        logPanel.innerHTML = '<span class="node-log-title">Planted Nodes (' + {len(normalized_clicks)} + ')</span>';
+        document.body.appendChild(logPanel);
 
+        const clicks = {json.dumps(normalized_clicks)};
+        let nodeCount = 0;
+
+        // Populate existing nodes from Streamlit State
         clicks.forEach(p => {{
+            nodeCount++;
+            
+            // Add to live log
+            logPanel.innerHTML += `<div class="node-entry">Node ${{nodeCount}}: [${{p[0].toFixed(2)}}, ${{p[1].toFixed(2)}}, ${{p[2].toFixed(2)}}]</div>`;
+
+            // Draw sphere
             const core = new THREE.Mesh(
                 new THREE.SphereGeometry(0.03, 16, 16),
                 new THREE.MeshStandardMaterial({{
@@ -269,7 +308,6 @@ with col1:
                     metalness: 0.2
                 }})
             );
-
             core.position.set(p[0], p[1], p[2]);
             scene.add(core);
 
@@ -281,10 +319,8 @@ with col1:
                     opacity: 0.15
                 }})
             );
-
             glow.position.set(p[0], p[1], p[2]);
             scene.add(glow);
-
         }});
 
         function build(data) {{
@@ -322,7 +358,7 @@ with col1:
             );
             scene.add(cadMesh);
 
-            // ── Visible debug overlay (no devtools needed) ─────────────
+            // ── Visible debug overlay (Top Left) ─────────────
             const dbg = document.createElement('div');
             dbg.style.cssText = `
                 position:fixed; top:10px; left:10px; z-index:999;
@@ -371,9 +407,6 @@ with col1:
 
             // ── keydown on canvas (not window) ─────────────────────────
             renderer.domElement.addEventListener('keydown', e => {{
-                dbg.style.color = '#38bdf8';
-                dbg.innerText = 'Key detected: ' + e.key;   // shows ANY key press
-
                 if (e.key !== 'p' && e.key !== 'P') return;
 
                 if (!lastHit) {{
@@ -382,20 +415,37 @@ with col1:
                     return;
                 }}
 
+                nodeCount++;
+
+                // INSTANT VISUAL FEEDBACK: Update Right Panel Log
+                logPanel.innerHTML += `<div class="node-entry" style="color: #ff4444;">Node ${{nodeCount}}: [${{lastHit.x.toFixed(2)}}, ${{lastHit.y.toFixed(2)}}, ${{lastHit.z.toFixed(2)}}]</div>`;
+                
+                // INSTANT VISUAL FEEDBACK: Draw Sphere immediately in Three.js
+                const newCore = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.03, 16, 16),
+                    new THREE.MeshStandardMaterial({{ color: 0xff3344, roughness: 0.4, metalness: 0.2 }})
+                );
+                newCore.position.copy(lastHit);
+                scene.add(newCore);
+
+                const newGlow = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.06, 24, 24),
+                    new THREE.MeshBasicMaterial({{ color: 0xff3344, transparent: true, opacity: 0.15 }})
+                );
+                newGlow.position.copy(lastHit);
+                scene.add(newGlow);
+
+                // Update Top Left Notification
                 dbg.style.color = '#a78bfa';
-                dbg.innerText = 'Sending node to Streamlit...\\n' +
+                dbg.innerText = 'Node sent to Engine!\\n' +
                     lastHit.x.toFixed(4) + ', ' +
                     lastHit.y.toFixed(4) + ', ' +
                     lastHit.z.toFixed(4);
 
+                // Broadcast to Streamlit
                 new BroadcastChannel('lattice-clicks').postMessage({{
                     x: lastHit.x, y: lastHit.y, z: lastHit.z, t: Date.now()
                 }});
-                dbg.style.color = '#a78bfa';
-                dbg.innerText = 'Node sent!\\n' +
-                    lastHit.x.toFixed(4) + ', ' +
-                    lastHit.y.toFixed(4) + ', ' +
-                    lastHit.z.toFixed(4);
             }});
 
         }} else {{
@@ -438,7 +488,8 @@ with col1:
 
 with col2:
 
-    st.markdown("### Stress Nodes")
+    st.markdown("### Processed Nodes")
+    st.caption("These reflect nodes registered by the Python backend.")
 
     if not st.session_state.clicks:
         st.info("Click on CAD in Mode A")
@@ -446,13 +497,13 @@ with col2:
     else:
         for i, c in enumerate(st.session_state.clicks):
             st.markdown(
-                f"Node {i+1}: "
+                f"**Node {i+1}**: "
                 f"<span class='coordinate-badge'>"
                 f"{c[0]:.2f}, {c[1]:.2f}, {c[2]:.2f}"
                 f"</span>",
                 unsafe_allow_html=True
             )
 
-        if st.button("Reset"):
+        if st.button("Clear All Nodes"):
             st.session_state.clicks = []
             st.rerun()
