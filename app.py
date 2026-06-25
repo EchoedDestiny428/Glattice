@@ -290,7 +290,11 @@ with col1:
         document.body.appendChild(logPanel);
 
         const clicks = {json.dumps(normalized_clicks)};
+        const influenceRadius = {json.dumps(stress_radius)};
         let nodeCount = 0;
+
+        const CORE_RADIUS = 0.02;
+        const GLOW_RADIUS = influenceRadius * 0.3;
 
         // Populate existing nodes from Streamlit State
         clicks.forEach(p => {{
@@ -298,10 +302,12 @@ with col1:
             
             // Add to live log
             logPanel.innerHTML += `<div class="node-entry">Node ${{nodeCount}}: [${{p[0].toFixed(2)}}, ${{p[1].toFixed(2)}}, ${{p[2].toFixed(2)}}]</div>`;
-
+            
+            
+            
             // Draw sphere
             const core = new THREE.Mesh(
-                new THREE.SphereGeometry(0.03, 16, 16),
+                new THREE.SphereGeometry(CORE_RADIUS, 16, 16),
                 new THREE.MeshStandardMaterial({{
                     color: 0xff3344,
                     roughness: 0.4,
@@ -312,7 +318,7 @@ with col1:
             scene.add(core);
 
             const glow = new THREE.Mesh(
-                new THREE.SphereGeometry(0.06, 24, 24),
+                new THREE.SphereGeometry(GLOW_RADIUS, 24, 24),
                 new THREE.MeshBasicMaterial({{
                     color: 0xff3344,
                     transparent: true,
@@ -422,14 +428,14 @@ with col1:
                 
                 // INSTANT VISUAL FEEDBACK: Draw Sphere immediately in Three.js
                 const newCore = new THREE.Mesh(
-                    new THREE.SphereGeometry(0.03, 16, 16),
+                    new THREE.SphereGeometry(CORE_RADIUS, 16, 16),
                     new THREE.MeshStandardMaterial({{ color: 0xff3344, roughness: 0.4, metalness: 0.2 }})
                 );
                 newCore.position.copy(lastHit);
                 scene.add(newCore);
 
                 const newGlow = new THREE.Mesh(
-                    new THREE.SphereGeometry(0.06, 24, 24),
+                    new THREE.SphereGeometry(GLOW_RADIUS, 24, 24),
                     new THREE.MeshBasicMaterial({{ color: 0xff3344, transparent: true, opacity: 0.15 }})
                 );
                 newGlow.position.copy(lastHit);
