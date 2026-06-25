@@ -154,7 +154,7 @@ with col1:
                 pressure_style=press_style,
                 density_base=density_base,
                 density_max=density_max,
-                combined_pressure_field=None # TODO: broken
+                combined_pressure_field=pressure_field
             )
 
             if lattice_mesh is not None:
