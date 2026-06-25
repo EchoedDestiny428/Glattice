@@ -7,6 +7,26 @@ from core.geometry import load_and_voxelize_mesh
 from core.physics import calculate_multi_pressure_field
 from core.tpms_lattice import generate_multi_field_lattice, LATTICE_LIBRARY
 
+import tempfile, os
+
+@st.cache_resource
+def _make_listener():
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, 'index.html'), 'w') as f:
+        f.write("""<!DOCTYPE html><html><body><script>
+window.parent.postMessage({type:"streamlit:componentReady",apiVersion:1},"*");
+window.parent.postMessage({type:"streamlit:setFrameHeight",height:0},"*");
+new BroadcastChannel("lattice-clicks").onmessage = e => {
+    window.parent.postMessage({
+        type:"streamlit:setComponentValue",
+        value:e.data,
+        dataType:"json"
+    },"*");
+};
+</script></body></html>""")
+    return components.declare_component("lattice_click_listener", path=d)
+
+_click_listener = _make_listener()
 
 st.set_page_config(
     page_title="Generative Stress-Lattice App",
@@ -191,31 +211,13 @@ with col1:
         # -----------------------------
         query_params = st.query_params
 
-        if "incoming_x" in query_params:
-
-            try:
-                pt = [
-                    float(query_params["incoming_x"]),
-                    float(query_params["incoming_y"]),
-                    float(query_params["incoming_z"])
-                ]
-
-                # Already normalized in JS now
-                new_pt = pt
-
-                duplicate = any(
-                    np.allclose(new_pt, c, atol=1e-3)
-                    for c in st.session_state.clicks
-                )
-
-                if not duplicate:
-                    st.session_state.clicks.append(new_pt)
-
-                st.query_params.clear()
-                st.rerun()
-
-            except Exception:
-                pass
+        click_data = _click_listener(key="lc", default=None)
+        if click_data and click_data.get('t') != st.session_state.get('_lt'):
+            st.session_state['_lt'] = click_data['t']
+            pt = [click_data['x'], click_data['y'], click_data['z']]
+            if not any(np.allclose(pt, c, atol=1e-3) for c in st.session_state.clicks):
+                st.session_state.clicks.append(pt)
+            st.rerun()
                 
         normalized_clicks = st.session_state.clicks
 
@@ -311,16 +313,90 @@ with col1:
         const base = build({json.dumps(geom_data)});
 
         if ("{view_mode}" === "Mode A: View CAD (Click Nodes)") {{
-
-            const m = new THREE.Mesh(
+            const cadMesh = new THREE.Mesh(
                 base,
                 new THREE.MeshStandardMaterial({{
                     color:0x546e7a,
                     side:THREE.DoubleSide
                 }})
             );
+            scene.add(cadMesh);
 
-            scene.add(m);
+            // ── Visible debug overlay (no devtools needed) ─────────────
+            const dbg = document.createElement('div');
+            dbg.style.cssText = `
+                position:fixed; top:10px; left:10px; z-index:999;
+                background:rgba(0,0,0,0.75); color:#facc15;
+                font:12px monospace; padding:8px 12px; border-radius:6px;
+                pointer-events:none; white-space:pre;
+            `;
+            dbg.innerText = 'Move mouse over mesh, then press P';
+            document.body.appendChild(dbg);
+
+            // ── Make canvas capture keyboard ───────────────────────────
+            renderer.domElement.setAttribute('tabindex', '0');
+            renderer.domElement.style.outline = 'none';
+
+            let lastHit = null;
+
+            renderer.domElement.addEventListener('mousemove', e => {{
+                renderer.domElement.focus();   // <-- critical: grabs keyboard focus
+
+                const rect = renderer.domElement.getBoundingClientRect();
+                const ndc = new THREE.Vector2(
+                    ((e.clientX - rect.left) / rect.width)  * 2 - 1,
+                    -((e.clientY - rect.top)  / rect.height) * 2 + 1
+                );
+
+                const ray = new THREE.Raycaster();
+                ray.setFromCamera(ndc, camera);
+                const hits = ray.intersectObject(cadMesh);
+
+                if (hits.length > 0) {{
+                    lastHit = hits[0].point;
+                    renderer.domElement.style.cursor = 'crosshair';
+                    dbg.style.color = '#4ade80';
+                    dbg.innerText =
+                        '✓ Hovering — press P to place node\\n' +
+                        'x: ' + lastHit.x.toFixed(4) + '\\n' +
+                        'y: ' + lastHit.y.toFixed(4) + '\\n' +
+                        'z: ' + lastHit.z.toFixed(4);
+                }} else {{
+                    lastHit = null;
+                    renderer.domElement.style.cursor = 'default';
+                    dbg.style.color = '#facc15';
+                    dbg.innerText = 'Move mouse over mesh, then press P';
+                }}
+            }});
+
+            // ── keydown on canvas (not window) ─────────────────────────
+            renderer.domElement.addEventListener('keydown', e => {{
+                dbg.style.color = '#38bdf8';
+                dbg.innerText = 'Key detected: ' + e.key;   // shows ANY key press
+
+                if (e.key !== 'p' && e.key !== 'P') return;
+
+                if (!lastHit) {{
+                    dbg.style.color = '#f87171';
+                    dbg.innerText = '✗ P pressed but cursor is off the mesh';
+                    return;
+                }}
+
+                dbg.style.color = '#a78bfa';
+                dbg.innerText = 'Sending node to Streamlit...\\n' +
+                    lastHit.x.toFixed(4) + ', ' +
+                    lastHit.y.toFixed(4) + ', ' +
+                    lastHit.z.toFixed(4);
+
+                new BroadcastChannel('lattice-clicks').postMessage({{
+                    x: lastHit.x, y: lastHit.y, z: lastHit.z, t: Date.now()
+                }});
+                dbg.style.color = '#a78bfa';
+                dbg.innerText = 'Node sent!\\n' +
+                    lastHit.x.toFixed(4) + ', ' +
+                    lastHit.y.toFixed(4) + ', ' +
+                    lastHit.z.toFixed(4);
+            }});
 
         }} else {{
 
