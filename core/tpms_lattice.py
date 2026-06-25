@@ -6,69 +6,111 @@ from skimage import measure
 
 LATTICE_LIBRARY = {
     "Gyroid":
-        "np.sin(X)*np.cos(Y)+np.sin(Y)*np.cos(Z)+np.sin(Z)*np.cos(X)",
+        "np.sin(X)*np.cos(Y) + np.sin(Y)*np.cos(Z) + np.sin(Z)*np.cos(X)",
 
     "Schwarz Diamond":
-        "np.sin(X)*np.sin(Y)*np.sin(Z)+"
-        "np.sin(X)*np.cos(Y)*np.cos(Z)+"
-        "np.cos(X)*np.sin(Y)*np.cos(Z)+"
+        "np.sin(X)*np.sin(Y)*np.sin(Z) + "
+        "np.sin(X)*np.cos(Y)*np.cos(Z) + "
+        "np.cos(X)*np.sin(Y)*np.cos(Z) + "
         "np.cos(X)*np.cos(Y)*np.sin(Z)",
 
     "Schwarz Primitive":
-        "np.cos(X)+np.cos(Y)+np.cos(Z)",
+        "np.cos(X) + np.cos(Y) + np.cos(Z)",
 
     "Neovius":
-        "3*(np.cos(X)+np.cos(Y)+np.cos(Z))+"
+        "3*(np.cos(X)+np.cos(Y)+np.cos(Z)) + "
         "4*np.cos(X)*np.cos(Y)*np.cos(Z)",
 
     "Lidinoid":
-        "np.sin(2*X)*np.cos(Y)*np.sin(Z)+"
-        "np.sin(2*Y)*np.cos(Z)*np.sin(X)+"
-        "np.sin(2*Z)*np.cos(X)*np.sin(Y)-"
-        "np.cos(2*X)*np.cos(2*Y)-"
-        "np.cos(2*Y)*np.cos(2*Z)-"
-        "np.cos(2*Z)*np.cos(2*X)"
+        "np.sin(2*X)*np.cos(Y)*np.sin(Z) + "
+        "np.sin(2*Y)*np.cos(Z)*np.sin(X) + "
+        "np.sin(2*Z)*np.cos(X)*np.sin(Y) - "
+        "np.cos(2*X)*np.cos(2*Y) - "
+        "np.cos(2*Y)*np.cos(2*Z) - "
+        "np.cos(2*Z)*np.cos(2*X)",
+
+    "Schoen I-WP":
+        "2*(np.cos(X)*np.cos(Y) + np.cos(Y)*np.cos(Z) + np.cos(Z)*np.cos(X)) "
+        "- (np.cos(2*X) + np.cos(2*Y) + np.cos(2*Z))",
+
+    "Schoen F-RD":
+        "4*np.cos(X)*np.cos(Y)*np.cos(Z) "
+        "- np.cos(2*X)*np.cos(2*Y) "
+        "- np.cos(2*Y)*np.cos(2*Z) "
+        "- np.cos(2*Z)*np.cos(2*X)",
+
+    "Fischer-Koch S":
+        "np.cos(2*X)*np.sin(Y)*np.cos(Z) + "
+        "np.cos(2*Y)*np.sin(Z)*np.cos(X) + "
+        "np.cos(2*Z)*np.sin(X)*np.cos(Y)",
+
+    "Cross Layers":
+        "np.cos(X)*np.cos(Y) + np.cos(Y)*np.cos(Z)",
+
+    "Tubular Matrix":
+        "10 - (np.sin(X)**2 + np.sin(Y)**2 + np.sin(Z)**2)"
 }
 
 
-def evaluate_lattice_string(expr, X, Y, Z):
-
-    allowed = {
-        "np": np,
-        "X": X,
-        "Y": Y,
-        "Z": Z
-    }
+def evaluate_lattice_string(
+    equation_str,
+    X,
+    Y,
+    Z
+):
+    """
+    Evaluate a TPMS equation safely.
+    """
 
     try:
+
+        allowed_locals = {
+            "np": np,
+            "X": X,
+            "Y": Y,
+            "Z": Z
+        }
+
         return eval(
-            expr,
+            equation_str,
             {"__builtins__": {}},
-            allowed
+            allowed_locals
         )
 
     except Exception as e:
-        print(e)
+
+        print(
+            f"Equation evaluation failed: {e}"
+        )
+
         return np.zeros_like(X)
 
 
 def generate_multi_field_lattice(
     resolution=64,
     periods=4.0,
+
     base_style="Gyroid",
     custom_base_eq="",
+
     pressure_style="Schwarz Diamond",
     custom_press_eq="",
+
     base_thickness=0.0,
     max_pressure_thickness=0.3,
+
     combined_pressure_field=None
 ):
+    """
+    Generate a pressure-adaptive TPMS lattice.
 
-    scale = np.pi * periods
+    Entire pipeline operates in normalized
+    coordinate space [-1,1].
+    """
 
     coords = np.linspace(
-        -scale,
-        scale,
+        -periods * np.pi,
+        periods * np.pi,
         resolution
     )
 
@@ -82,13 +124,19 @@ def generate_multi_field_lattice(
     base_expr = (
         custom_base_eq
         if base_style == "Custom Equation"
-        else LATTICE_LIBRARY[base_style]
+        else LATTICE_LIBRARY.get(
+            base_style,
+            LATTICE_LIBRARY["Gyroid"]
+        )
     )
 
     pressure_expr = (
         custom_press_eq
         if pressure_style == "Custom Equation"
-        else LATTICE_LIBRARY[pressure_style]
+        else LATTICE_LIBRARY.get(
+            pressure_style,
+            LATTICE_LIBRARY["Schwarz Diamond"]
+        )
     )
 
     f_base = evaluate_lattice_string(
@@ -98,49 +146,62 @@ def generate_multi_field_lattice(
         Z
     )
 
-    f_press = evaluate_lattice_string(
+    f_pressure = evaluate_lattice_string(
         pressure_expr,
         X,
         Y,
         Z
     )
 
+    # ---------------------------------
+    # Topology blending
+    # ---------------------------------
+
     if combined_pressure_field is None:
 
-        final_field = f_base - base_thickness
+        final_field = (
+            f_base -
+            base_thickness
+        )
 
     else:
 
         W = np.clip(
             combined_pressure_field,
-            0,
-            1
+            0.0,
+            1.0
         )
 
-        blended = (
+        blended_tpms = (
             (1.0 - W) * f_base +
-            W * f_press
+            W * f_pressure
         )
 
         threshold = (
             base_thickness +
-            W *
-            (
+            W * (
                 max_pressure_thickness -
                 base_thickness
             )
         )
 
-        final_field = blended - threshold
+        final_field = (
+            blended_tpms -
+            threshold
+        )
 
-    final_field[0, :, :] = 1
-    final_field[-1, :, :] = 1
+    # ---------------------------------
+    # Force closed volume boundaries
+    # ---------------------------------
 
-    final_field[:, 0, :] = 1
-    final_field[:, -1, :] = 1
+    final_field[0, :, :] = 1.0
+    final_field[-1, :, :] = 1.0
 
-    final_field[:, :, 0] = 1
-    final_field[:, :, -1] = 1
+    final_field[:, 0, :] = 1.0
+    final_field[:, -1, :] = 1.0
+
+    final_field[:, :, 0] = 1.0
+    final_field[:, :, -1] = 1.0
 
     try:
 
@@ -151,15 +212,29 @@ def generate_multi_field_lattice(
             )
         )
 
-        spacing = (
-            2.0 * scale
-        ) / (
-            resolution - 1
+    except Exception as e:
+
+        print(
+            f"Marching cubes failed: {e}"
         )
 
-        verts = (
-            verts * spacing
-        ) - scale
+        return None
+
+    # ---------------------------------
+    # Convert voxel coordinates
+    # into normalized CAD space [-1,1]
+    # ---------------------------------
+
+    spacing = (
+        2.0 /
+        (resolution - 1)
+    )
+
+    verts = (
+        verts * spacing
+    ) - 1.0
+
+    try:
 
         mesh = trimesh.Trimesh(
             vertices=verts,
@@ -171,16 +246,24 @@ def generate_multi_field_lattice(
 
         mesh.remove_unreferenced_vertices()
 
-        mesh.fill_holes()
+        try:
+            mesh.process(
+                validate=True
+            )
+        except Exception:
+            pass
 
-        mesh.fix_normals()
+        try:
+            mesh.fill_holes()
+        except Exception:
+            pass
 
         return mesh
 
     except Exception as e:
 
         print(
-            f"Lattice generation failed: {e}"
+            f"Mesh construction failed: {e}"
         )
 
         return None

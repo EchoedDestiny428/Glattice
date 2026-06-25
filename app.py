@@ -1,387 +1,347 @@
 import streamlit as st
 import numpy as np
-import trimesh
 import json
 import streamlit.components.v1 as components
-from core.tpms_lattice import generate_multi_field_lattice, LATTICE_LIBRARY
-from core.physics import calculate_multi_pressure_field
+
 from core.geometry import load_and_voxelize_mesh
-from pathlib import Path
+from core.physics import calculate_multi_pressure_field
+from core.tpms_lattice import generate_multi_field_lattice, LATTICE_LIBRARY
 
-@st.cache_resource(show_spinner=False)
-def cached_load_mesh(path, resolution):
-    return load_and_voxelize_mesh(
-        path,
-        resolution
-    )
-
-@st.cache_resource(show_spinner=False)
-def cached_tpms(
-    resolution,
-    periods,
-    base_style,
-    press_style,
-    base_dense,
-    max_dense,
-    pressure_hash,
-    pressure_field
-):
-    return generate_multi_field_lattice(
-        resolution=resolution,
-        periods=periods,
-        base_style=base_style,
-        pressure_style=press_style,
-        base_thickness=base_dense,
-        max_pressure_thickness=max_dense,
-        combined_pressure_field=pressure_field
-    )
-
-if "clicks" not in st.session_state:
-    st.session_state.clicks = []
 
 st.set_page_config(
-    page_title="Generative Stress-Lattice App", 
+    page_title="Generative Stress-Lattice App",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Premium dashboard UI injection
+# -----------------------------
+# STATE
+# -----------------------------
+if "clicks" not in st.session_state:
+    st.session_state.clicks = []
+
+@st.cache_resource(show_spinner=False)
+def cached_mesh(path, resolution):
+    return load_and_voxelize_mesh(path, resolution)
+
+
+@st.cache_data(show_spinner=False)
+def cached_pressure(resolution, clicks_tuple, radius):
+    clicks = [list(c) for c in clicks_tuple]
+    return calculate_multi_pressure_field(
+        resolution=resolution,
+        click_list=clicks,
+        influence_radius=radius
+    )
+
 st.markdown("""
-    <style>
-    .main-title { font-size: 42px !important; font-weight: 800 !important; color: #00ffcc; margin-bottom: 5px; }
-    .subtitle { font-size: 16px !important; color: #a0aec0; margin-bottom: 30px; }
-    .card { background-color: #1e1e1e; padding: 20px; border-radius: 10px; border-left: 5px solid #00ffcc; margin-bottom: 20px; }
-    .coordinate-badge { background-color: #2d3748; color: #ff3333; padding: 4px 8px; border-radius: 5px; font-family: monospace; margin: 4px; display: inline-block; }
-    </style>
+<style>
+.main-title {
+    font-size: 42px;
+    font-weight: 800;
+    color: #00ffcc;
+}
+.subtitle {
+    font-size: 14px;
+    color: #a0aec0;
+}
+.card {
+    background-color: #1e1e1e;
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 10px;
+}
+.coordinate-badge {
+    background-color: #2d3748;
+    color: #ff4444;
+    padding: 3px 6px;
+    border-radius: 5px;
+}
+</style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="main-title">Stress-Driven Generative Lattice Studio</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Synthesize adaptive, topology-optimized internal microstructures on-the-fly.</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">Stress-Lattice Studio</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Topology-driven adaptive lattice generation</div>', unsafe_allow_html=True)
 
-# --- SIDEBAR CONFIGURATION ---
-st.sidebar.markdown("### 🎛️ 1. Studio Operation Mode")
+# ---------------- SIDEBAR ----------------
+st.sidebar.header("Controls")
+
 view_mode = st.sidebar.radio(
-    "Select Interface Focus Mode:",
-    ["Mode A: View Original STL (Paint Stress Nodes)", "Mode B: View Generated Microstructure Matrix"]
+    "Mode",
+    [
+        "Mode A: View CAD (Click Nodes)",
+        "Mode B: View Lattice"
+    ]
 )
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 🧬 2. Global Lattice Parameters")
-resolution = st.sidebar.slider("Voxel Grid Resolution", 32, 96, 64, step=16)
-periods = st.sidebar.slider("Lattice Cell Frequency (Periods)", 1.0, 10.0, 4.0, step=0.5)
+resolution = st.sidebar.slider("Resolution", 32, 96, 64, step=16)
+periods = st.sidebar.slider("Periods", 1.0, 10.0, 4.0, step=0.5)
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 🧮 3. Mathematical Topologies")
-options = list(LATTICE_LIBRARY.keys())
-base_style = st.sidebar.selectbox("Baseline Structure (Low Pressure)", options, index=0)
-press_style = st.sidebar.selectbox("Reinforcement Structure (High Pressure)", options, index=1)
+base_style = st.sidebar.selectbox(
+    "Base TPMS",
+    list(LATTICE_LIBRARY.keys())
+)
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 📐 4. Density Configurations")
-base_dense = st.sidebar.slider("Baseline Wall Thickness", -0.4, 0.4, 0.0, step=0.05)
-max_dense = st.sidebar.slider("Max Pressure Thickness", -0.4, 0.6, 0.3, step=0.05)
-inf_radius = st.sidebar.slider("Pressure Blend Radius (Bubble Size)", 0.1, 1.5, 0.4, step=0.05)
+press_style = st.sidebar.selectbox(
+    "Pressure TPMS",
+    list(LATTICE_LIBRARY.keys())
+)
 
-# --- WORKSPACE ---
-col_left, col_right = st.columns([3, 2], gap="large")
+base_dense = st.sidebar.slider("Base Thickness", -0.4, 0.4, 0.0)
+max_dense = st.sidebar.slider("Max Thickness", -0.4, 0.6, 0.3)
+inf_radius = st.sidebar.slider("Influence Radius", 0.1, 1.5, 0.4)
 
-with col_left:
-    st.markdown('<div class="card"><h3>📦 Interactive Web Viewport Canvas</h3></div>', unsafe_allow_html=True)
-    uploaded_file = st.file_uploader("Upload Target Part File (STL/OBJ format)", type=["stl", "obj"], label_visibility="collapsed")
-    
-    if uploaded_file:
-        safe_name = Path(uploaded_file.name).name
-        input_path = f"data/input/{safe_name}"
-        with open(input_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-            
-        with st.spinner("Processing live graphics display context..."):
-            cad_mesh, _ = cached_load_mesh(
-                input_path,
-                resolution
+col1, col2 = st.columns([3, 2])
+
+with col1:
+
+    uploaded = st.file_uploader(
+        "Upload STL/OBJ",
+        type=["stl", "obj"]
+    )
+
+    if uploaded:
+
+        path = f"data/{uploaded.name}"
+
+        with open(path, "wb") as f:
+            f.write(uploaded.getbuffer())
+
+        cad_mesh, cad_mask, meta = cached_mesh(
+            path,
+            resolution
+        )
+
+        # -----------------------------
+        # NORMALIZED MESH (NO MORE SCALE)
+        # -----------------------------
+        geom_data = {
+            "vertices": cad_mesh.vertices.tolist(),
+            "faces": cad_mesh.faces.tolist()
+        }
+
+                # -----------------------------
+        # CLICK LIST (ALREADY NORMALIZED)
+        # -----------------------------
+        clicks = st.session_state.clicks
+
+        clicks_tuple = tuple(
+            tuple(c) for c in clicks
+        )
+
+        pressure_field = cached_pressure(
+            resolution,
+            clicks_tuple,
+            inf_radius
+        )
+
+        lattice_mesh = None
+        lattice_data = None
+
+        if view_mode == "Mode B: View Lattice":
+
+            lattice_mesh = generate_multi_field_lattice(
+                resolution=resolution,
+                periods=periods,
+                base_style=base_style,
+                pressure_style=press_style,
+                base_thickness=base_dense,
+                max_pressure_thickness=max_dense,
+                combined_pressure_field=pressure_field
             )
-            
-            # Center and scale to normalized bounds (-1 to 1) 
-            # --- 1. Compute Shared Normalization ---
-            min_bounds = cad_mesh.vertices.min(axis=0)
-            max_bounds = cad_mesh.vertices.max(axis=0)
-            extents = max_bounds - min_bounds
-            scale_factor = 2.0 / np.max(extents) if np.max(extents) > 0 else 1.0
-            centroid = (min_bounds + max_bounds) / 2  # AABB Center
 
-            # Apply to STL
-            norm_vertices = (cad_mesh.vertices - centroid) * scale_factor
-            # Snap to floor (Y=0)
-            norm_vertices[:, 1] -= norm_vertices[:, 1].min()
-            geom_data = {"vertices": norm_vertices.tolist(), "faces": cad_mesh.faces.tolist()}
-            
-            
-            lattice_data = None
-            if "Mode B" in view_mode:
-                physics_clicks = [
-                    ((np.array(pt) - centroid) * scale_factor).tolist()
-                    for pt in st.session_state.clicks
-                ]
+            if lattice_mesh is not None:
 
-                master_field = calculate_multi_pressure_field(
-                    resolution=resolution,
-                    click_list=physics_clicks,
-                    influence_radius=inf_radius
-                )
-                lattice_mesh = generate_multi_field_lattice(
-                    resolution=resolution, periods=periods, base_style=base_style, custom_base_eq="",
-                    pressure_style=press_style, custom_press_eq="", base_thickness=base_dense,
-                    max_pressure_thickness=max_dense, combined_pressure_field=master_field
-                )
-                
-                if lattice_mesh is not None:
-
-                    try:
-                        lattice_mesh = lattice_mesh.intersection(cad_mesh, engine='manifold')
-                        if (
-                            lattice_mesh is None
-                            or len(lattice_mesh.vertices) == 0
-                        ):
-                            lattice_mesh = None
-                    except Exception as e:
-                        st.warning(f"Boolean intersection skipped: {e}")
-                    
-                    if lattice_mesh is not None:
-                    
-                        # 2. FIX: Reset the lattice to its own local center immediately after intersection
-                        # This removes the "drift" caused by the boolean operation
-                        lattice_mesh.vertices -= lattice_mesh.bounding_box.centroid
-                        
-                        # Now continue with your existing cleaning and scaling logic
-                        comps = [
-                            c for c in lattice_mesh.split(
-                                only_watertight=False
-                            )
-                            if len(c.vertices) > 0
-                        ]
-
-                        if comps:
-                            lattice_mesh = max(
-                                comps,
-                                key=lambda m: m.area
-                            )
-                        else:
-                            lattice_mesh = None
-                        
-                        # --- UNIFORM PROPORTIONAL FITTING ENGINE ---
-                        # 1. Get bounding extents for both systems
-                        # Note: Using the post-intersection lattice_mesh.vertices
-                        lat_extents = lattice_mesh.bounding_box.extents
-                        stl_norm_extents = norm_vertices.max(axis=0) - norm_vertices.min(axis=0)
-                        
-                        # 2. Compute proportional aspect ratios
-                        with np.errstate(divide='ignore', invalid='ignore'):
-                            ratios = stl_norm_extents / lat_extents
-                            ratios = ratios[np.isfinite(ratios) & (ratios > 0)]
-                        
-                        uniform_ratio = np.min(ratios) if len(ratios) > 0 else 1.0
-                        
-                        # 3. Apply scaling and move it to the normalized STL center point
-                        # Because we centered the lattice at (0,0,0) above, this now aligns perfectly
-                        lat_vertices = (lattice_mesh.vertices) * uniform_ratio
-                        
-                        # 4. Final floor snap
-                        lat_vertices[:, 1] -= lat_vertices[:, 1].min()
-
-                        lattice_data = {"vertices": lat_vertices.tolist(), "faces": lattice_mesh.faces.tolist()}
-
-            # Map coordinates safely into the normalized viewport scale domain
-            normalized_clicks = []
-            for pt in st.session_state.clicks:
-                norm_pt = (np.array(pt) - centroid) * scale_factor
-                normalized_clicks.append(norm_pt.tolist())
-
-            # --- RECEIVE CLICK EVENTS FROM JAVASCRIPT ---
-            query_params = st.query_params
-            if "incoming_x" in query_params:
                 try:
-                    click_pt = [
-                        float(query_params["incoming_x"]),
-                        float(query_params["incoming_y"]),
-                        float(query_params["incoming_z"])
-                    ]
-                    world_pt = (np.array(click_pt) / scale_factor) + centroid
-                    world_pt_list = world_pt.tolist()
-                    duplicate = any(
-                        np.allclose(
-                            world_pt,
-                            np.array(existing),
-                            atol=1e-3
-                        )
-                        for existing in st.session_state.clicks
+                    lattice_mesh = lattice_mesh.intersection(
+                        cad_mesh,
+                        engine="manifold"
+                    )
+                except Exception as e:
+                    st.warning(f"Boolean skipped: {e}")
+
+                if lattice_mesh and len(lattice_mesh.vertices) > 0:
+
+                    comps = lattice_mesh.split(
+                        only_watertight=False
                     )
 
-                    if not duplicate:
-                        st.session_state.clicks.append(
-                            world_pt_list
+                    if comps:
+                        lattice_mesh = max(
+                            comps,
+                            key=lambda m: m.area
                         )
-                    st.query_params.clear()
-                    st.rerun()
-                except Exception:
-                    pass
 
-            # --- THREE.JS GRAPHICS COMPONENT ENGINE ---
-            html_template = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-                <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-                <style>
-                    body {{ margin: 0; background-color: #0f1115; overflow: hidden; }}
-                    #canvas-container {{ width: 100vw; height: 100vh; }}
-                    #overlay-ui {{ position: absolute; top: 10px; left: 10px; color: #00ffcc; background: rgba(30,30,30,0.85); padding: 8px 12px; border-radius: 5px; pointer-events: none; font-size: 13px; font-weight: bold; border-left: 3px solid #00ffcc; }}
-                </style>
-            </head>
-            <body>
-                <div id="overlay-ui">Active Canvas Mode: {"Mode A (Click Shell to Add Nodes)" if "Mode A" in view_mode else "Mode B (Lattice View)"}</div>
-                <div id="canvas-container"></div>
-                <script>
-                    const container = document.getElementById('canvas-container');
-                    const scene = new THREE.Scene();
-                    scene.background = new THREE.Color('#0f1115');
+                    lattice_data = {
+                        "vertices": lattice_mesh.vertices.tolist(),
+                        "faces": lattice_mesh.faces.tolist()
+                    }
+                else:
+                    lattice_data = None
 
-                    const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
-                    camera.position.set(3, 2, 4);
+                # -----------------------------
+        # CLICK HANDLING
+        # -----------------------------
+        query_params = st.query_params
 
-                    const renderer = new THREE.WebGLRenderer({{ antialias: true }});
-                    renderer.setSize(window.innerWidth, window.innerHeight);
-                    renderer.setPixelRatio(window.devicePixelRatio);
-                    container.appendChild(renderer.domElement);
+        if "incoming_x" in query_params:
 
-                    const controls = new THREE.OrbitControls(camera, renderer.domElement);
-                    controls.enableDamping = true;
-                    controls.dampingFactor = 0.05;
+            try:
+                pt = [
+                    float(query_params["incoming_x"]),
+                    float(query_params["incoming_y"]),
+                    float(query_params["incoming_z"])
+                ]
 
-                    const grid = new THREE.GridHelper(6, 30, '#00ffcc', '#222630');
-                    grid.position.y = 0;
-                    scene.add(grid);
+                # Already normalized in JS now
+                new_pt = pt
 
-                    scene.add(new THREE.AmbientLight('#ffffff', 0.5));
-                    const topLight = new THREE.DirectionalLight('#ffffff', 0.8);
-                    topLight.position.set(5, 8, 5);
-                    scene.add(topLight);
+                duplicate = any(
+                    np.allclose(new_pt, c, atol=1e-3)
+                    for c in st.session_state.clicks
+                )
 
-                    const sideLight = new THREE.DirectionalLight('#ffffff', 0.5);
-                    sideLight.position.set(-5, 3, -5);
-                    scene.add(sideLight);
+                if not duplicate:
+                    st.session_state.clicks.append(new_pt)
 
-                    const clickList = {json.dumps(normalized_clicks)};
-                    const infRadius = {inf_radius * scale_factor};
+                st.query_params.clear()
+                st.rerun()
 
-                    clickList.forEach(pt => {{
-                        const coreMesh = new THREE.Mesh(
-                            new THREE.SphereGeometry(0.04, 16, 16),
-                            new THREE.MeshBasicMaterial({{ color: 0xff3344 }})
-                        );
-                        coreMesh.position.set(pt[0], pt[1], pt[2]);
-                        scene.add(coreMesh);
+            except Exception:
+                pass
+                
+        normalized_clicks = st.session_state.clicks
 
-                        const bubMesh = new THREE.Mesh(
-                            new THREE.SphereGeometry(infRadius, 32, 32),
-                            new THREE.MeshBasicMaterial({{ color: 0xff3344, transparent: true, opacity: 0.15 }})
-                        );
-                        bubMesh.position.set(pt[0], pt[1], pt[2]);
-                        scene.add(bubMesh);
-                    }});
+        html = f"""
+        <html>
+        <head>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
-                    function buildMeshGeometry(data) {{
-                        const geometry = new THREE.BufferGeometry();
-                        const vertices = [];
-                        data.faces.forEach(face => {{
-                            face.forEach(vIdx => {{
-                                vertices.push(data.vertices[vIdx][0], data.vertices[vIdx][1], data.vertices[vIdx][2]);
-                            }});
-                        }});
-                        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-                        geometry.computeVertexNormals();
-                        return geometry;
-                    }}
+        <style>
+            body {{ margin:0; overflow:hidden; background:#0f1115; }}
+        </style>
+        </head>
 
-                    const baseGeomData = {json.dumps(geom_data)};
-                    const baseGeometry = buildMeshGeometry(baseGeomData);
+        <body>
+        <div id="c"></div>
 
-                    if ("{"Mode A" in view_mode}" === "True") {{
-                        const mat = new THREE.MeshStandardMaterial({{ color: 0x546e7a, roughness: 0.4, metalness: 0.2, side: THREE.DoubleSide }});
-                        const mesh = new THREE.Mesh(baseGeometry, mat);
-                        scene.add(mesh);
+        <script>
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color('#0f1115');
 
-                        const raycaster = new THREE.Raycaster();
-                        const mouse = new THREE.Vector2();
-                        
-                        let mDownTime = 0;
-                        window.addEventListener('mousedown', () => {{ mDownTime = Date.now(); }});
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 100);
+        camera.position.set(3,2,4);
 
-                        window.addEventListener('mouseup', (e) => {{
-                            if (Date.now() - mDownTime > 200) return; 
+        const renderer = new THREE.WebGLRenderer({{antialias:true}});
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
 
-                            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-                            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-                            raycaster.setFromCamera(mouse, camera);
-                            const intersects = raycaster.intersectObject(mesh);
-                            
-                            if(intersects.length > 0) {{
-                                const p = intersects[0].point;
-                                const parentUrl = new URL(window.parent.location.href);
-                                parentUrl.searchParams.set('incoming_x', p.x.toFixed(4));
-                                parentUrl.searchParams.set('incoming_y', p.y.toFixed(4));
-                                parentUrl.searchParams.set('incoming_z', p.z.toFixed(4));
-                                window.parent.location.href = parentUrl.toString();
-                            }}
-                        }});
-                    }} else {{
-                        const latGeomData = {json.dumps(lattice_data) if lattice_data else "null"};
-                        if(latGeomData) {{
-                            const latGeom = buildMeshGeometry(latGeomData);
-                            const latMat = new THREE.MeshStandardMaterial({{ color: 0xb0bec5, roughness: 0.3, metalness: 0.7, side: THREE.DoubleSide }});
-                            const latMesh = new THREE.Mesh(latGeom, latMat);
-                            scene.add(latMesh);
-                        }}
-                        
-                        const wireframe = new THREE.WireframeGeometry(baseGeometry);
-                        const line = new THREE.LineSegments(wireframe);
-                        line.material.color.setHex(0xff3344);
-                        line.material.opacity = 0.35;
-                        line.material.transparent = true;
-                        scene.add(line);
-                    }}
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
 
-                    function animate() {{
-                        requestAnimationFrame(animate);
-                        controls.update();
-                        renderer.render(scene, camera);
-                    }}
-                    animate();
+        const clicks = {json.dumps(normalized_clicks)};
 
-                    window.addEventListener('resize', () => {{
-                        camera.aspect = window.innerWidth / window.innerHeight;
-                        camera.updateProjectionMatrix();
-                        renderer.setSize(window.innerWidth, window.innerHeight);
-                    }});
-                </script>
-            </body>
-            </html>
-            """
-            
-            components.html(html_template, height=600, scrolling=False)
+        clicks.forEach(p => {{
+            const s = new THREE.Mesh(
+                new THREE.SphereGeometry(0.03, 16, 16),
+                new THREE.MeshBasicMaterial({{color:0xff3344}})
+            );
+            s.position.set(p[0], p[1], p[2]);
+            scene.add(s);
+        }});
 
-with col_right:
-    st.markdown('<div class="card"><h3>🎯 Applied Stress Fields</h3></div>', unsafe_allow_html=True)
-    
+        function build(data) {{
+            const g = new THREE.BufferGeometry();
+            const v = [];
+
+            data.faces.forEach(f => {{
+                f.forEach(i => {{
+                    v.push(
+                        data.vertices[i][0],
+                        data.vertices[i][1],
+                        data.vertices[i][2]
+                    );
+                }});
+            }});
+
+            g.setAttribute(
+                'position',
+                new THREE.Float32BufferAttribute(v,3)
+            );
+
+            g.computeVertexNormals();
+            return g;
+        }}
+
+        const base = build({json.dumps(geom_data)});
+
+        if ("{view_mode}" === "Mode A: View CAD (Click Nodes)") {{
+
+            const m = new THREE.Mesh(
+                base,
+                new THREE.MeshStandardMaterial({{
+                    color:0x546e7a,
+                    side:THREE.DoubleSide
+                }})
+            );
+
+            scene.add(m);
+
+        }} else {{
+
+            const lat = {json.dumps(lattice_data) if 'lattice_data' in locals() and lattice_data else "null"};
+
+            if (lat) {{
+                const g = build(lat);
+                const m = new THREE.Mesh(
+                    g,
+                    new THREE.MeshStandardMaterial({{
+                        color:0xb0bec5,
+                        side:THREE.DoubleSide
+                    }})
+                );
+                scene.add(m);
+            }}
+
+            const wire = new THREE.LineSegments(
+                new THREE.WireframeGeometry(base)
+            );
+
+            wire.material.color.setHex(0xff3344);
+            scene.add(wire);
+        }}
+
+        function animate(){{
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene,camera);
+        }}
+
+        animate();
+        </script>
+        </body>
+        </html>
+        """
+
+        components.html(html, height=650)
+
+with col2:
+
+    st.markdown("### Stress Nodes")
+
     if not st.session_state.clicks:
-        st.info("No stress vectors applied yet. Select Mode A and click directly on the component structure surface layout.")
+        st.info("Click on CAD in Mode A")
+
     else:
-        st.write(f"**Total Registered Nodes:** {len(st.session_state.clicks)}")
-        for idx, click in enumerate(st.session_state.clicks):
-            st.markdown(f"**Node {idx+1}:** <span class='coordinate-badge'>X: {click[0]:.2f}, Y: {click[1]:.2f}, Z: {click[2]:.2f}</span>", unsafe_allow_html=True)
-            
-        st.write("")
-        if st.button("Reset All Coordinates", type="secondary", use_container_width=True):
+        for i, c in enumerate(st.session_state.clicks):
+            st.markdown(
+                f"Node {i+1}: "
+                f"<span class='coordinate-badge'>"
+                f"{c[0]:.2f}, {c[1]:.2f}, {c[2]:.2f}"
+                f"</span>",
+                unsafe_allow_html=True
+            )
+
+        if st.button("Reset"):
             st.session_state.clicks = []
-            st.query_params.clear()
             st.rerun()
