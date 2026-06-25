@@ -87,9 +87,16 @@ press_style = st.sidebar.selectbox(
     list(LATTICE_LIBRARY.keys())
 )
 
-base_dense = st.sidebar.slider("Base Thickness", -0.4, 0.4, 0.0)
-max_dense = st.sidebar.slider("Max Thickness", -0.4, 0.6, 0.3)
-inf_radius = st.sidebar.slider("Influence Radius", 0.1, 1.5, 0.4)
+density_base = st.sidebar.slider(
+    "Base Density",
+    0.0, 1.0, 0.5, step=0.05
+)
+
+density_max = st.sidebar.slider(
+    "Max Pressure Density",
+    0.0, 1.0, 0.8, step=0.05
+)
+stress_radius = st.sidebar.slider("Influence Radius", 0.1, 1.5, 0.4)
 
 col1, col2 = st.columns([3, 2])
 
@@ -132,7 +139,7 @@ with col1:
         pressure_field = cached_pressure(
             resolution,
             clicks_tuple,
-            inf_radius
+            stress_radius
         )
 
         lattice_mesh = None
@@ -145,9 +152,9 @@ with col1:
                 periods=periods,
                 base_style=base_style,
                 pressure_style=press_style,
-                base_thickness=base_dense,
-                max_pressure_thickness=max_dense,
-                combined_pressure_field=pressure_field
+                density_base=density_base,
+                density_max=density_max,
+                combined_pressure_field=None # TODO: broken
             )
 
             if lattice_mesh is not None:
@@ -179,7 +186,7 @@ with col1:
                 else:
                     lattice_data = None
 
-                # -----------------------------
+        # -----------------------------
         # CLICK HANDLING
         # -----------------------------
         query_params = st.query_params
@@ -228,7 +235,17 @@ with col1:
 
         <script>
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color('#0f1115');
+        scene.background = new THREE.Color('#111318');
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+
+        const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        keyLight.position.set(5, 10, 7);
+        scene.add(keyLight);
+
+        const fillLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        fillLight.position.set(-5, 3, -2);
+        scene.add(fillLight);
 
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 100);
         camera.position.set(3,2,4);
@@ -242,12 +259,30 @@ with col1:
         const clicks = {json.dumps(normalized_clicks)};
 
         clicks.forEach(p => {{
-            const s = new THREE.Mesh(
+            const core = new THREE.Mesh(
                 new THREE.SphereGeometry(0.03, 16, 16),
-                new THREE.MeshBasicMaterial({{color:0xff3344}})
+                new THREE.MeshStandardMaterial({{
+                    color: 0xff3344,
+                    roughness: 0.4,
+                    metalness: 0.2
+                }})
             );
-            s.position.set(p[0], p[1], p[2]);
-            scene.add(s);
+
+            core.position.set(p[0], p[1], p[2]);
+            scene.add(core);
+
+            const glow = new THREE.Mesh(
+                new THREE.SphereGeometry(0.06, 24, 24),
+                new THREE.MeshBasicMaterial({{
+                    color: 0xff3344,
+                    transparent: true,
+                    opacity: 0.15
+                }})
+            );
+
+            glow.position.set(p[0], p[1], p[2]);
+            scene.add(glow);
+
         }});
 
         function build(data) {{
