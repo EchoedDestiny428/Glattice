@@ -195,11 +195,8 @@ with col1:
                         only_watertight=False
                     )
 
-                    if comps:
-                        lattice_mesh = max(
-                            comps,
-                            key=lambda m: m.area
-                        )
+                    if comps is not None and len(comps) > 0:
+                        lattice_mesh = max(comps, key=lambda m: m.area)
 
                     lattice_data = {
                         "vertices": lattice_mesh.vertices.tolist(),
